@@ -82,6 +82,7 @@ let stream = null;
 let faceDb = [];
 let detectionLoopOn = false;
 let actionBusy = false;
+let statusPinned = false; // mantém o resultado do reconhecimento visível
 
 function status(msg){ document.getElementById('status').textContent = msg; }
 function cfg(){
@@ -129,7 +130,7 @@ async function detectarContinuamente(){
     if(v.readyState>=2){
       const result=await human.detect(v);
       const faces=result.face||[];desenharDeteccao(faces);
-      if(!actionBusy){
+      if(!actionBusy && !statusPinned){
         if(faces.length===1) status('ROSTO DETECTADO ✓\nMantenha o rosto centralizado e bem iluminado.');
         else if(faces.length>1) status('Mais de um rosto detectado. Deixe apenas uma pessoa diante da câmera.');
         else status('Câmera ativa. Aguardando rosto...');
@@ -194,6 +195,7 @@ async function cadastrarRosto(){
 }
 async function testarReconhecimento(){
   try{
+    statusPinned=false;
     actionBusy=true;
     if(!faceDb.length) await carregarBase();
     if(!faceDb.length) throw new Error('Não há rostos cadastrados.');
@@ -206,12 +208,14 @@ async function testarReconhecimento(){
     }
     if(!best||best.similarity<0.58)
       throw new Error('Rosto detectado, mas não reconhecido. Similaridade: '+(best?(best.similarity*100).toFixed(1)+'%':'indisponível'));
+    statusPinned=true;
     status('RECONHECIMENTO CONFIRMADO ✓\\nFuncionário: '+best.nome+'\\nSimilaridade: '+(best.similarity*100).toFixed(1)+'%\\nNenhum ponto foi registrado.');
   }catch(e){status(e.message);}
   finally{actionBusy=false;}
 }
 async function registrarPonto(){
   try{
+    statusPinned=false;
     if(!faceDb.length)await carregarBase();
     if(!faceDb.length)throw new Error('Não há rostos cadastrados.');
     actionBusy=true;status('Reconhecendo rosto...');
