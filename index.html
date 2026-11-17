@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ponto Facial</title>
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/human/dist/human.js"></script>
+<style>
+:root{font-family:Arial,sans-serif;color:#172033;background:#f3f5f8}
+body{margin:0;padding:18px}.wrap{max-width:680px;margin:auto}
+.card{background:white;border-radius:16px;padding:18px;margin:12px 0;box-shadow:0 2px 12px #15223812}
+h1{font-size:25px;margin:4px 0}h2{font-size:18px;margin:4px 0 12px}
+small,.muted{color:#667085}.row{display:flex;gap:10px;flex-wrap:wrap}
+input,button{font:inherit;padding:12px;border-radius:9px;border:1px solid #cbd5e1}
+input{width:100%;box-sizing:border-box;margin:6px 0 12px}
+button{background:#155eef;color:white;border:0;font-weight:700;cursor:pointer}
+button.secondary{background:#e8eefc;color:#173b78}
+button:disabled{opacity:.5;cursor:wait}
+video{width:100%;max-height:420px;object-fit:cover;background:#111;border-radius:12px;transform:scaleX(-1)}
+.status{padding:12px;border-radius:9px;background:#eef2f7;margin-top:12px;white-space:pre-wrap}
+#bridge{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Controle de Ponto</h1>
+    <div class="muted">Reconhecimento facial • Registro de entrada e saída</div>
+  </div>
+  <div class="card">
+    <h2>Conexão</h2>
+    <label>URL do Web App do Apps Script (termina em /exec)</label>
+    <input id="apiUrl" placeholder="https://script.google.com/macros/s/.../exec">
+    <label>Token da API (Propriedades do script)</label>
+    <input id="apiToken" type="password" placeholder="Cole o token configurado pelo administrador">
+    <button class="secondary" onclick="salvarConfig()">Salvar configuração neste aparelho</button>
+  </div>
+  <div class="card">
+    <h2>Câmera</h2>
+    <video id="video" autoplay muted playsinline></video>
+    <div class="row">
+      <button id="cameraBtn" onclick="iniciarCamera()">Ativar câmera</button>
+      <button id="loadBtn" class="secondary" onclick="carregarBase()">Carregar cadastros</button>
+    </div>
+    <div id="status" class="status">Informe URL e token. Abra esta página diretamente no Chrome ou Safari, fora do navegador interno do WhatsApp.</div>
+  </div>
+  <div class="card">
+    <h2>Cadastrar rosto (administrador)</h2>
+    <label>IDCOLAB do funcionário</label>
+    <input id="employeeId" placeholder="IDCOLAB">
+    <button id="enrollBtn" onclick="cadastrarRosto()">Capturar e cadastrar rosto</button>
+    <small>O funcionário deve olhar para a câmera, sem outras pessoas no enquadramento.</small>
+  </div>
+  <div class="card">
+    <h2>Registrar ponto</h2>
+    <button id="punchBtn" onclick="registrarPonto()">Reconhecer e registrar entrada/saída</button>
+    <small>O sistema alterna entrada e saída conforme o último registro individual.</small>
+  </div>
+</div>
+<iframe name="bridge" id="bridge"></iframe>
+<script>
+const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/human/models/';
+const humanConfig = {
+  backend: 'webgl',
+  modelBasePath: MODEL_URL,
+  face: {
+    enabled: true,
+    detector: { rotation: true, maxDetected: 2 },
+    mesh: { enabled: true },
+    description: { enabled: true },
+    antispoof: { enabled: false }
+  },
+  body: { enabled: false }, hand: { enabled: false },
+  object: { enabled: false }, gesture: { enabled: false }
+};
+const human = new Human.Human(humanConfig);
+let stream = null;
+let faceDb = [];
+
+function status(msg){ document.getElementById('status').textContent = msg; }
+function cfg(){
+  return { url: document.getElementById('apiUrl').value.trim(),
+           token: document.getElementById('apiToken').value.trim() };
+}
+function salvarConfig(){
+  const c=cfg();
+  if(!c.url || !c.token){status('Informe URL e token.');return;}
+  localStorage.setItem('pontoApiUrl',c.url);
+  localStorage.setItem('pontoApiToken',c.token);
+  status('Configuração salva neste aparelho.');
+}
+(function restore(){
+  document.getElementById('apiUrl').value=localStorage.getItem('pontoApiUrl')||'';
+  document.getElementById('apiToken').value=localStorage.getItem('pontoApiToken')||'';
+})();
+async function iniciarCamera(){
+  try{
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+      throw new Error('Este navegador não liberou acesso à câmera. Use HTTPS no Chrome/Safari.');
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
+    const v=document.getElementById('video'); v.srcObject=stream; await v.play();
+    await human.load();
+    status('Câmera ativa. Modelos de reconhecimento carregados.');
+  }catch(e){status('Falha ao iniciar câmera/modelos: '+e.message);}
+}
+function api(action,extra={}){
+  return new Promise((resolve,reject)=>{
+    const c=cfg();
+    if(!c.url||!c.token){reject(new Error('Configure URL e token da API.'));return;}
+    const requestId=crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random();
+    const form=document.createElement('form');
+    form.method='POST';form.action=c.url;form.target='bridge';form.style.display='none';
+    const input=document.createElement('input');input.name='payload';input.type='hidden';
+    input.value=JSON.stringify({requestId,action,token:c.token,...extra});
+    form.appendChild(input);document.body.appendChild(form);
+    const timeout=setTimeout(()=>{cleanup();reject(new Error('Tempo esgotado aguardando o Apps Script.'));},25000);
+    function cleanup(){clearTimeout(timeout);window.removeEventListener('message',listener);form.remove();}
+    function listener(ev){
+      const d=ev.data;
+      if(!d||d.requestId!==requestId)return;
+      cleanup();
+      if(d.result&&d.result.ok)resolve(d.result);
+      else reject(new Error(d.result&&d.result.error||'Erro na API.'));
+    }
+    window.addEventListener('message',listener);
+    form.submit();
+  });
+}
+async function carregarBase(){
+  try{
+    status('Carregando cadastros faciais...');
+    const r=await api('listFaces');faceDb=r.faces||[];
+    status('Cadastros carregados: '+faceDb.length+'.');
+  }catch(e){status(e.message);}
+}
+async function obterEmbedding(){
+  const v=document.getElementById('video');
+  if(!stream)throw new Error('Ative a câmera primeiro.');
+  const r=await human.detect(v);
+  if(!r.face||r.face.length!==1)throw new Error('Enquadre somente um rosto, de frente e bem iluminado.');
+  const emb=r.face[0].embedding;
+  if(!emb||!emb.length)throw new Error('Não foi possível calcular o descritor facial.');
+  return Array.from(emb);
+}
+async function cadastrarRosto(){
+  try{
+    const id=document.getElementById('employeeId').value.trim();
+    if(!id)throw new Error('Informe o IDCOLAB.');
+    status('Analisando rosto...');
+    const embedding=await obterEmbedding();
+    const r=await api('enroll',{idcolab:id,embedding});
+    await carregarBase();
+    status(r.message+' Funcionário: '+r.nome);
+  }catch(e){status(e.message);}
+}
+async function registrarPonto(){
+  try{
+    if(!faceDb.length)await carregarBase();
+    if(!faceDb.length)throw new Error('Não há rostos cadastrados.');
+    status('Reconhecendo rosto...');
+    const embedding=await obterEmbedding();
+    let best=null;
+    for(const f of faceDb){
+      const similarity=human.match.similarity(embedding,f.embedding);
+      if(!best||similarity>best.similarity)best={...f,similarity};
+    }
+    if(!best||best.similarity<0.58)
+      throw new Error('Rosto não reconhecido. Similaridade insuficiente.');
+    const r=await api('punch',{idcolab:best.id,similarity:best.similarity});
+    status('PONTO REGISTRADO\n'+r.nome+'\n'+r.tipo+'\n'+r.dataHora+
+      '\nSimilaridade: '+(best.similarity*100).toFixed(1)+'%');
+  }catch(e){status(e.message);}
+}
+</script>
+</body>
+</html>
