@@ -228,10 +228,13 @@ async function registrarPonto(){
     if(!best||best.similarity<0.58)
       throw new Error('Rosto não reconhecido. Similaridade insuficiente.');
     const r=await api('punch',{idcolab:best.id,similarity:best.similarity});
-    status('PONTO REGISTRADO\n'+r.nome+'\n'+r.tipo+'\n'+r.dataHora+
-      '\nSimilaridade: '+(best.similarity*100).toFixed(1)+'%');
-  }catch(e){status(e.message);}
-  finally{actionBusy=false;}
+    statusPinned=true;
+    status('PONTO REGISTRADO ✓\\nFuncionário: '+r.nome+'\\nTipo: '+r.tipo+'\\nData e hora: '+r.dataHora+
+      '\\nSimilaridade: '+(best.similarity*100).toFixed(1)+'%');
+  }catch(e){
+    statusPinned=true;
+    status(e.message);
+  }finally{actionBusy=false;}
 }
 </script>
 </body>
