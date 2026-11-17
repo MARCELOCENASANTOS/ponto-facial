@@ -222,7 +222,7 @@ async function verificarProvaDeVida(){
   let inicioPiscada=0;
   let piscadaConfirmada=false;
   status('PROVA DE VIDA\nOlhe para a câmera e pisque naturalmente.');
-  while(Date.now()-inicio<30000){
+  while(Date.now()-inicio<10000){
     if(!stream || v.readyState<2) throw new Error('Câmera indisponível durante a prova de vida.');
     const r=await human.detect(v);
     const faces=r.face||[];
