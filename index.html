@@ -113,7 +113,8 @@ window.addEventListener('load', () => {
       if (!c.url || !c.token) {
         status('A câmera será iniciada automaticamente. Falta configurar a conexão da API neste aparelho.');
       }
-      await iniciarCamera();
+      const cameraOk = await iniciarCamera();
+      if (!cameraOk) return;
       if (c.url && c.token) {
         await carregarBase();
         status('Câmera ativa e cadastros carregados. Aguardando reconhecimento. Nenhum ponto foi registrado.');
@@ -136,7 +137,8 @@ async function iniciarCamera(){
     detectionLoopOn = true;
     status('Modelos carregados. Procurando um rosto...');
     detectarContinuamente();
-  }catch(e){status('Falha ao iniciar câmera/modelos: '+e.message);}
+    return true;
+  }catch(e){status('Falha ao iniciar câmera/modelos: '+e.message);return false;}
 }
 function desenharDeteccao(faces){
   const v=document.getElementById('video');
