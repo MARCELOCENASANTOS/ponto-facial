@@ -71,11 +71,13 @@ const humanConfig = {
     enabled: true,
     detector: { rotation: true, maxDetected: 2 },
     mesh: { enabled: true },
+    iris: { enabled: true },
     description: { enabled: true },
-    antispoof: { enabled: false }
+    antispoof: { enabled: true, skipFrames: 1, skipTime: 500 },
+    liveness: { enabled: true, skipFrames: 1, skipTime: 500 }
   },
   body: { enabled: false }, hand: { enabled: false },
-  object: { enabled: false }, gesture: { enabled: false }
+  object: { enabled: false }, gesture: { enabled: true }
 };
 const human = new Human.Human(humanConfig);
 let stream = null;
@@ -127,7 +129,7 @@ async function detectarContinuamente(){
   if(!detectionLoopOn) return;
   const v=document.getElementById('video');
   try{
-    if(v.readyState>=2){
+    if(v.readyState>=2 && !actionBusy){
       const result=await human.detect(v);
       const faces=result.face||[];desenharDeteccao(faces);
       if(!actionBusy && !statusPinned){
@@ -213,12 +215,50 @@ async function testarReconhecimento(){
   }catch(e){status(e.message);}
   finally{actionBusy=false;}
 }
+async function verificarProvaDeVida(){
+  const v=document.getElementById('video');
+  const inicio=Date.now();
+  let inicioPiscada=0;
+  let piscadaConfirmada=false;
+  status('PROVA DE VIDA\nOlhe para a câmera e pisque naturalmente.');
+  while(Date.now()-inicio<30000){
+    if(!stream || v.readyState<2) throw new Error('Câmera indisponível durante a prova de vida.');
+    const r=await human.detect(v);
+    const faces=r.face||[];
+    desenharDeteccao(faces);
+    if(faces.length!==1){
+      inicioPiscada=0;piscadaConfirmada=false;
+      status('PROVA DE VIDA\nMantenha apenas um rosto diante da câmera.');
+    }else{
+      const gestures=Object.values(r.gesture||human.result.gesture||{}).map(g=>g.gesture);
+      const olhosFechados=gestures.includes('blink left eye')||gestures.includes('blink right eye');
+      if(olhosFechados && !inicioPiscada) inicioPiscada=Date.now();
+      if(!olhosFechados && inicioPiscada){
+        const duracao=Date.now()-inicioPiscada;
+        if(duracao>=80 && duracao<=1200) piscadaConfirmada=true;
+        inicioPiscada=0;
+      }
+      const real=Number(faces[0].real||0);
+      const live=Number(faces[0].live||0);
+      const antiSpoofOk=real>=0.6 && live>=0.6;
+      if(piscadaConfirmada && antiSpoofOk){
+        status('PROVA DE VIDA APROVADA ✓');
+        return true;
+      }
+      status('PROVA DE VIDA\nPisque naturalmente.\nVerificação de presença: '+Math.round(real*100)+'%\nVerificação de vida: '+Math.round(live*100)+'%');
+    }
+    await new Promise(resolve=>setTimeout(resolve,250));
+  }
+  throw new Error('Prova de vida não confirmada. Tente novamente, com boa iluminação e olhando para a câmera.');
+}
 async function registrarPonto(){
   try{
     statusPinned=false;
     if(!faceDb.length)await carregarBase();
     if(!faceDb.length)throw new Error('Não há rostos cadastrados.');
-    actionBusy=true;status('Reconhecendo rosto...');
+    actionBusy=true;
+    await verificarProvaDeVida();
+    status('Prova de vida aprovada. Reconhecendo funcionário...');
     const embedding=await obterEmbedding();
     let best=null;
     for(const f of faceDb){
