@@ -16,7 +16,9 @@ input{width:100%;box-sizing:border-box;margin:6px 0 12px}
 button{background:#155eef;color:white;border:0;font-weight:700;cursor:pointer}
 button.secondary{background:#e8eefc;color:#173b78}
 button:disabled{opacity:.5;cursor:wait}
-video{width:100%;max-height:420px;object-fit:cover;background:#111;border-radius:12px;transform:scaleX(-1)}
+ .video-wrap{position:relative;width:100%;background:#111;border-radius:12px;overflow:hidden}
+video{display:block;width:100%;max-height:420px;object-fit:cover;background:#111;border-radius:12px;transform:scaleX(-1)}
+#faceOverlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;transform:scaleX(-1)}
 .status{padding:12px;border-radius:9px;background:#eef2f7;margin-top:12px;white-space:pre-wrap}
 #bridge{display:none}
 </style>
@@ -37,7 +39,7 @@ video{width:100%;max-height:420px;object-fit:cover;background:#111;border-radius
   </div>
   <div class="card">
     <h2>Câmera</h2>
-    <video id="video" autoplay muted playsinline></video>
+    <div class="video-wrap"><video id="video" autoplay muted playsinline></video><canvas id="faceOverlay"></canvas></div>
     <div class="row">
       <button id="cameraBtn" onclick="iniciarCamera()">Ativar câmera</button>
       <button id="loadBtn" class="secondary" onclick="carregarBase()">Carregar cadastros</button>
@@ -62,6 +64,7 @@ video{width:100%;max-height:420px;object-fit:cover;background:#111;border-radius
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/human/models/';
 const humanConfig = {
   backend: 'wasm',
+  wasmPath: 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.22.0/dist/',
   modelBasePath: MODEL_URL,
   face: {
     enabled: true,
@@ -76,6 +79,8 @@ const humanConfig = {
 const human = new Human.Human(humanConfig);
 let stream = null;
 let faceDb = [];
+let detectionLoopOn = false;
+let actionBusy = false;
 
 function status(msg){ document.getElementById('status').textContent = msg; }
 function cfg(){
@@ -99,9 +104,41 @@ async function iniciarCamera(){
       throw new Error('Este navegador não liberou acesso à câmera. Use HTTPS no Chrome/Safari.');
     stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
     const v=document.getElementById('video'); v.srcObject=stream; await v.play();
+    if (v.readyState < 2) await new Promise(resolve => v.addEventListener('loadeddata', resolve, { once: true }));
+    status('Carregando modelos de inteligência artificial...');
     await human.load();
-    status('Câmera ativa. Modelos de reconhecimento carregados.');
+    detectionLoopOn = true;
+    status('Modelos carregados. Procurando um rosto...');
+    detectarContinuamente();
   }catch(e){status('Falha ao iniciar câmera/modelos: '+e.message);}
+}
+function desenharDeteccao(faces){
+  const v=document.getElementById('video');
+  const c=document.getElementById('faceOverlay');
+  if(!v.videoWidth || !v.videoHeight) return;
+  if(c.width!==v.videoWidth || c.height!==v.videoHeight){c.width=v.videoWidth;c.height=v.videoHeight;}
+  const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);
+  ctx.lineWidth=Math.max(3,Math.round(c.width/240));ctx.strokeStyle='#19d36b';
+  for(const f of faces){if(f.box && f.box.length>=4){const [x,y,w,h]=f.box;ctx.strokeRect(x,y,w,h);}}
+}
+async function detectarContinuamente(){
+  if(!detectionLoopOn) return;
+  const v=document.getElementById('video');
+  try{
+    if(v.readyState>=2){
+      const result=await human.detect(v);
+      const faces=result.face||[];desenharDeteccao(faces);
+      if(!actionBusy){
+        if(faces.length===1) status('ROSTO DETECTADO ✓\nMantenha o rosto centralizado e bem iluminado.');
+        else if(faces.length>1) status('Mais de um rosto detectado. Deixe apenas uma pessoa diante da câmera.');
+        else status('Câmera ativa. Aguardando rosto...');
+      }
+    }
+  }catch(e){
+    console.error('Falha na detecção facial:',e);
+    if(!actionBusy) status('Erro na detecção facial: '+(e.message||e));
+  }
+  if(detectionLoopOn) setTimeout(detectarContinuamente,500);
 }
 function api(action,extra={}){
   return new Promise((resolve,reject)=>{
@@ -146,18 +183,19 @@ async function cadastrarRosto(){
   try{
     const id=document.getElementById('employeeId').value.trim();
     if(!id)throw new Error('Informe o IDCOLAB.');
-    status('Analisando rosto...');
+    actionBusy=true;status('Analisando rosto...');
     const embedding=await obterEmbedding();
     const r=await api('enroll',{idcolab:id,embedding});
     await carregarBase();
     status(r.message+' Funcionário: '+r.nome);
   }catch(e){status(e.message);}
+  finally{actionBusy=false;}
 }
 async function registrarPonto(){
   try{
     if(!faceDb.length)await carregarBase();
     if(!faceDb.length)throw new Error('Não há rostos cadastrados.');
-    status('Reconhecendo rosto...');
+    actionBusy=true;status('Reconhecendo rosto...');
     const embedding=await obterEmbedding();
     let best=null;
     for(const f of faceDb){
@@ -170,6 +208,7 @@ async function registrarPonto(){
     status('PONTO REGISTRADO\n'+r.nome+'\n'+r.tipo+'\n'+r.dataHora+
       '\nSimilaridade: '+(best.similarity*100).toFixed(1)+'%');
   }catch(e){status(e.message);}
+  finally{actionBusy=false;}
 }
 </script>
 </body>
