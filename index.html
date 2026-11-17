@@ -103,6 +103,27 @@ function salvarConfig(){
   document.getElementById('apiUrl').value=localStorage.getItem('pontoApiUrl')||'';
   document.getElementById('apiToken').value=localStorage.getItem('pontoApiToken')||'';
 })();
+
+// Inicialização automática ao abrir a página pelo AppSheet ou navegador.
+// Nesta etapa apenas abre a câmera e carrega os cadastros; não registra ponto.
+window.addEventListener('load', () => {
+  setTimeout(async () => {
+    try {
+      const c = cfg();
+      if (!c.url || !c.token) {
+        status('A câmera será iniciada automaticamente. Falta configurar a conexão da API neste aparelho.');
+      }
+      await iniciarCamera();
+      if (c.url && c.token) {
+        await carregarBase();
+        status('Câmera ativa e cadastros carregados. Aguardando reconhecimento. Nenhum ponto foi registrado.');
+      }
+    } catch (e) {
+      status('Não foi possível iniciar automaticamente: ' + (e.message || e) + '. Toque em Ativar câmera para tentar novamente.');
+    }
+  }, 300);
+});
+
 async function iniciarCamera(){
   try{
     if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
